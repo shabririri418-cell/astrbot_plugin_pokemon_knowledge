@@ -1,4 +1,5 @@
 import pathlib,sys,tempfile,unittest
+from contextlib import closing
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from pokemon_knowledge.extract import extract_html,expand_table
@@ -51,6 +52,27 @@ class Extraction(unittest.TestCase):
   self.assertTrue(all(len(b['text'])<=1000 for b in blocks))
 
 class Store(unittest.TestCase):
+ def test_multiple_section_keywords_match_out_of_order_and_offer_relevant_sections(self):
+  with tempfile.TemporaryDirectory() as directory, closing(KnowledgeStore(pathlib.Path(directory)/'wiki.db')) as store:
+   store.put_xml('测试龙',0,1,1,'','','2026-11-22')
+   blocks=[dict(section='普通形态 / 属性',text='普通信息')]
+   blocks.extend(dict(section='普通形态 / 无关资料'+str(i),text='资料') for i in range(35))
+   blocks.append(dict(section='游戏中 / 种族值 / 超级测试龙',text='特攻216。'))
+   store.put_rendered('测试龙',blocks,'2026-11-17','fixture')
+   result=store.read('测试龙','超级测试龙 种族值')
+   self.assertIn('特攻216',result['text'])
+   missing=store.read('测试龙','超级测试龙 种族值 特性')
+   self.assertTrue(missing['section_not_found'])
+   self.assertEqual(missing['available_sections'][0],'游戏中 / 种族值 / 超级测试龙')
+ def test_mega_form_stats_outrank_standard_form_and_only_fact_questions_are_prefetched(self):
+  with tempfile.TemporaryDirectory() as directory, closing(KnowledgeStore(pathlib.Path(directory)/'wiki.db')) as store:
+   store.put_xml('测试龙',0,1,1,'','','2026-11-22')
+   store.put_rendered('测试龙',[dict(section='游戏中 / 种族值 / 普通形态',text='特攻100。'),dict(section='游戏中 / 种族值 / 超级测试龙',text='特攻216。')],'2026-11-17','fixture')
+   self.assertIn('216',store.search('测试龙 mega 特攻')[0]['text'])
+   self.assertTrue(store.query_plan('mega测试龙的特攻是多少'))
+   self.assertTrue(store.query_plan('216特攻是种族值，不是实际能力值'))
+   self.assertFalse(store.query_plan('我觉得测试龙好可爱'))
+   self.assertFalse(store.query_plan('调查指令我几个小时前已经说了'))
  def test_appendix_is_searchable_by_unprefixed_title_without_hiding_main_aliases(self):
   self.store.put_xml('附录:速度线',100,7,9,'','皮卡丘速度线','snapshot')
   self.store.put_rendered('附录:速度线',[dict(section='对战',text='皮卡丘速度线为90。')],'snapshot','appendix')

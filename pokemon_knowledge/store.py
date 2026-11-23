@@ -10,7 +10,7 @@ SOURCE='神奇宝贝百科（52Poké Wiki）'
 KNOWLEDGE_NAMESPACES=(0,100)
 
 class KnowledgeStore:
-    query_revision='2'
+    query_revision='3'
     def __init__(self,path,readonly=False):
         self.path=Path(path).resolve();self.readonly=readonly;self._depth=0;self.db=None
         if readonly:return
@@ -118,6 +118,35 @@ ON CONFLICT(title) DO UPDATE SET namespace=excluded.namespace,xml_id=excluded.xm
                 seen.add(page['id']);pages.append(page)
         return pages[:6]
 
+    def query_plan(self,text):
+        """Plan only the current message. Never scans chat history or triggers a reply."""
+        text=str(text).strip()[:160]
+        fact=bool(re.search(r'多少|是什么|为什么|为啥|怎么|哪[个些种]|能否|可以|[?？]|种族值|特攻|特防|努力值|个体值|伤害|威力|弱点|抗性|二倍|几倍|最强|配招|克制|进化',text,re.I))
+        if not fact:return []
+        domain=bool(re.search(r'宝可梦|神奇宝贝|pokemon|种族值|特攻|特防|努力值|个体值|招式|配招|速度线|mega',text,re.I))
+        with self.connection() as db:
+            deadline=time.monotonic()+0.5;db.set_progress_handler(lambda:time.monotonic()>deadline,2000)
+            try:
+                pages=[]
+                for page in self._candidates(db,text):
+                    pokemon=db.execute("SELECT 1 FROM chunks WHERE page_id=? AND section LIKE '%种族值%' LIMIT 1",(page['id'],)).fetchone()
+                    if pokemon or re.search(r'（招式）|（特性）|（道具）',page['title']) or (domain and page['namespace']==100):pages.append(page)
+                    if len(pages)==3:break
+            finally:db.set_progress_handler(None,0)
+        if pages:
+            plans=[]
+            for page in pages:
+                mega=' 超级 ' if re.search(r'超级|mega',text,re.I) else ' '
+                if page['title'].endswith('（招式）'):focus='威力 属性 分类 招式说明'
+                elif re.search(r'二倍|几倍|弱点|弱[龙冰火水电]|克制|抗性',text):focus='属性 特性'
+                elif re.search(r'伤害|抗.*一|扛|撑|吃.*一',text):focus='种族值 特攻 特防 属性'
+                elif re.search(r'种族值|特攻|特防|速度|攻击|防御',text):focus='种族值 '+text
+                elif '属性' in text:focus='属性'
+                else:focus=text
+                plans.append((page['title']+mega+focus)[:160])
+            return plans
+        return [text] if domain else []
+
     def search(self,query,limit=5,max_chars=6500):
         query=str(query).strip()[:160]
         if len(query)<2:return []
@@ -142,6 +171,13 @@ ON CONFLICT(title) DO UPDATE SET namespace=excluded.namespace,xml_id=excluded.xm
                     if re.search(r'速度|攻击|防御|特攻|特防|种族值|\bhp\b',query,re.I) and not re.search(r'基础点数|努力值|击倒|获得|速度[线線]',query):
                         if '种族值' in row['section']:field_bonus+=24
                     if '属性' in query and row['section'].endswith('属性'):field_bonus+=12
+                    if '属性相性' in query and '属性相性' in row['section']:
+                        field_bonus+=32
+                        if '反转' in row['section'] and '反转' not in query:field_bonus-=24
+                    if '招式说明' in query and '招式说明' in row['section']:field_bonus+=24
+                    if re.search(r'超级|mega',query,re.I):
+                        if '超级' in row['section']:field_bonus+=36
+                        elif '种族值' in row['section']:field_bonus-=18
                     return (100-ranks[row['page_id']]*15 if row['page_id'] in ranks else 0)+overlap*4+field_bonus-min(20,row['position']*0.015)
                 ordered=sorted(candidates.values(),key=score,reverse=True);results=[];remaining=max_chars
                 for row in ordered:
@@ -170,11 +206,20 @@ ON CONFLICT(title) DO UPDATE SET namespace=excluded.namespace,xml_id=excluded.xm
             if row is None:
                 pages=self._candidates(db,title);row=pages[0] if pages else None
             if row is None:return {}
-            items=db.execute('SELECT section,text FROM chunks WHERE page_id=? AND section LIKE ? ORDER BY position',(row['id'],'%'+section.replace('%','').replace('_','')+'%'))
-            body='\n\n'.join((item['section']+'\n' if item['section'] else '')+item['text'] for item in items)
+            keywords=[title_key(word) for word in re.split(r'[\s/／]+',section) if word]
+            owner=title_key(row['title'])
+            keywords=[key.replace(owner,'') if owner in key and key!=owner else key for key in keywords]
+            items=list(db.execute('SELECT section,text FROM chunks WHERE page_id=? ORDER BY position',(row['id'],)))
+            def matches(heading):
+                forms=[title_key(value) for value in variants(heading)]
+                return all(any(key in form for form in forms) for key in keywords)
+            selected=[item for item in items if matches(item['section'])]
+            body='\n\n'.join((item['section']+'\n' if item['section'] else '')+item['text'] for item in selected)
             if not body and section:
                 result=self._source(row)
-                sections=[item[0] for item in db.execute('SELECT DISTINCT section FROM chunks WHERE page_id=? LIMIT 30',(row['id'],))]
+                sections=list(dict.fromkeys(item['section'] for item in items))
+                sections.sort(key=lambda heading:sum(any(key in title_key(value) for value in variants(heading)) for key in keywords),reverse=True)
+                sections=sections[:30]
                 result.update(text='',offset=0,next_offset=None,total_chars=0,section_not_found=True,available_sections=sections)
                 return result
             if not body and row['raw_source']:body='【原始维基源代码，模板未渲染】\n'+zlib.decompress(row['raw_source']).decode('utf8')

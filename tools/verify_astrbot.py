@@ -38,7 +38,8 @@ async def main():
         config = dict(database_path=str(path / 'pokemon.sqlite3'), allowed_origins=['synthetic:allowed'])
         plugin = module.PokemonKnowledge(context, config)
         await plugin.initialize()
-        event = types.SimpleNamespace(unified_msg_origin='synthetic:allowed', get_extra=lambda key: False)
+        extras = {}
+        event = types.SimpleNamespace(unified_msg_origin='synthetic:allowed', get_extra=lambda key: extras.get(key), set_extra=lambda key, value: extras.__setitem__(key, value))
         value = json.loads(await plugin.search_pokemon_knowledge(event, '测试条目'))
         assert value['available'] and '合成' in value['results'][0]['text']
         request = types.SimpleNamespace(func_tool=ToolSet(), system_prompt='原有人格')
