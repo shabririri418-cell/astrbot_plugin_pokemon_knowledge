@@ -1,0 +1,6 @@
+name: astrbot_plugin_pokemon_knowledge
+display_name: 宝可梦离线知识库
+desc: 从52Poké离线XML/ZIM构建本地百科，支持名称别名、全文和章节查询，自然回答
+version: 1.0.0
+author: shabririri418-cell
+repo: https://github.com/shabririri418-cell/astrbot_plugin_pokemon_knowledge

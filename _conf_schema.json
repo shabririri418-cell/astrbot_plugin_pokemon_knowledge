@@ -1,0 +1,5 @@
+{
+  "enabled": {"description": "启用宝可梦知识工具", "type": "bool", "default": true},
+  "database_path": {"description": "封库后的SQLite绝对路径；留空使用插件数据目录的pokemon.sqlite3。容器部署须填写容器内路径。", "type": "string", "default": ""},
+  "allowed_origins": {"description": "允许使用知识工具的会话unified_msg_origin列表；空列表允许所有正常触发的会话。本插件不会主动唤起聊天。", "type": "list", "default": []}
+}
